@@ -45,4 +45,14 @@ QList<TcpSocketInfo> parseSs(const QString &text);
 // "200ms", "1.204sec", "1min12sec", "2min" -> milliseconds; -1 on failure.
 double parseSsDuration(const QString &s);
 
+// Filter expressions for `ss -tnoiH state all <filter>`, one ss call each.
+//   match "peer":  sockets to or from ip:port (ip required), i.e. the remote
+//                  end is the vehicle / a WebSocket server elsewhere.
+//   match "local": sockets whose local port is `port`, i.e. a server on this
+//                  PC (e.g. a WebSocket server whose clients use random
+//                  ports); with an ip, only connections from that client.
+// Returns false and sets *error on invalid input.
+bool ssSocketFilters(const QString &match, const QString &ip, int port, QList<QStringList> *out,
+                     QString *error = nullptr);
+
 } // namespace dlsim

@@ -1,6 +1,7 @@
 // Polls `ss -tnoi` (via the helper) at 1 Hz for connections to/from a peer
-// ip:port. Tracks state changes, retransmissions, RTO and backoff so the TCP
-// stall after a link outage can be seen and exported.
+// ip:port, or (match "local") for connections on a local port, e.g. a
+// WebSocket server on this PC. Tracks state changes, retransmissions, RTO and
+// backoff so the TCP stall after a link outage can be seen and exported.
 #pragma once
 
 #include "Parsers.h"
@@ -21,6 +22,9 @@ class SocketMonitor : public QObject
     Q_OBJECT
     Q_PROPERTY(QString peerIp READ peerIp WRITE setPeerIp NOTIFY configChanged)
     Q_PROPERTY(int peerPort READ peerPort WRITE setPeerPort NOTIFY configChanged)
+    // "peer": the remote end is ip:port. "local": the local port is `peerPort`
+    // (a server here, clients on random ports); peerIp is an optional client filter.
+    Q_PROPERTY(QString match READ match WRITE setMatch NOTIFY configChanged)
     Q_PROPERTY(bool running READ running NOTIFY runningChanged)
     Q_PROPERTY(QVariantList sockets READ sockets NOTIFY updated)
     Q_PROPERTY(QString lastError READ lastError NOTIFY updated)
@@ -30,12 +34,18 @@ public:
 
     QString peerIp() const { return m_ip; }
     int peerPort() const { return m_port; }
+    QString match() const { return m_match; }
     bool running() const { return m_timer.isActive(); }
     QVariantList sockets() const { return m_rows; }
     QString lastError() const { return m_lastError; }
     QString tracked() const { return m_trackedKey; }
     void setPeerIp(const QString &ip);
     void setPeerPort(int port);
+    void setMatch(const QString &match);
+
+    // Takes ip and port from "ws://ip:port/…", "wss://ip" or "ip:port".
+    // Returns an error message, empty on success.
+    Q_INVOKABLE QString setFromUrl(const QString &url);
 
     Q_INVOKABLE void start();
     Q_INVOKABLE void stop();
@@ -62,6 +72,7 @@ private:
     EventLog *m_log;
     QString m_ip = QStringLiteral("192.0.2.10");
     int m_port = 4555;
+    QString m_match = QStringLiteral("peer");
     QTimer m_timer;
     QElapsedTimer m_clock;
     bool m_inFlight = false;

@@ -22,7 +22,7 @@ enum class Direction { Uplink, Downlink }; // uplink = ground->air, downlink = a
 enum class Mode { Bridge, Host };
 enum class Distribution { Uniform, Normal, Pareto, ParetoNormal };
 enum class LossModel { Random, GilbertElliott };
-enum class Proto { Any, Tcp, Udp, Icmp };
+enum class Proto { Any, Tcp, Udp, Icmp, WebSocket }; // WebSocket = TCP on the class port
 enum class ClassMode { Link, Custom, Excluded };
 
 QString toString(Direction);
@@ -83,7 +83,7 @@ struct TrafficClass {
     bool enabled = true;
     Proto proto = Proto::Any;
     QString ip;        // empty = any. Matches either source or destination (endpoint semantics)
-    quint16 port = 0;  // 0 = any. Requires tcp or udp
+    quint16 port = 0;  // 0 = any. Requires tcp or udp; required for websocket
     ClassMode mode = ClassMode::Link;
     Profile uplink;    // used when mode == Custom
     Profile downlink;
@@ -114,5 +114,16 @@ struct LinkConfig {
 
 bool isValidIfaceName(const QString &name);
 bool isValidIp(const QString &ip);
+
+// True for protocols matched by port (tcp, udp, websocket).
+bool hasPorts(Proto p);
+// The ip_proto tc matches for this class protocol: WebSocket travels over TCP,
+// so it is filtered as tcp on its port.
+Proto wireProto(Proto p);
+
+// "ws://192.0.2.10:8080/path", "wss://192.0.2.10" (port 443), "ws://host" (80)
+// or a bare "192.0.2.10:8080". The host must be an IPv4 address: filters are
+// IPv4 only and the helper never resolves names. Returns false and sets *error.
+bool parseWebSocketUrl(const QString &url, QString *ip, quint16 *port, QString *error = nullptr);
 
 } // namespace dlsim

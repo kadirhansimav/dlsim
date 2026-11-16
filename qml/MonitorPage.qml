@@ -85,20 +85,43 @@ Item {
         }
 
         Section {
-            title: "TCP socket monitor"
+            id: sockSection
+            title: "TCP / WebSocket socket monitor"
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumHeight: 220
+            readonly property bool local: Sockets.match === "local"
+            property string urlError: ""
 
             RowLayout {
-                Label { text: "Peer" }
+                BoundCombo {
+                    Layout.preferredWidth: 170
+                    enabled: !Sockets.running
+                    values: ["peer", "local"]
+                    labels: ["Remote IP:port", "Local port (server here)"]
+                    current: Sockets.match
+                    onPicked: (v) => Sockets.match = v
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Remote: the server (vehicle, WebSocket server) is at IP:port.\n"
+                                  + "Local: a server on this PC listens on the port; clients connect from random ports."
+                }
+                Label { text: sockSection.local ? "Client" : "Peer" }
                 TextField {
-                    Layout.preferredWidth: 120
+                    Layout.preferredWidth: 150
                     text: Sockets.peerIp
-                    placeholderText: "IPv4"
+                    placeholderText: sockSection.local ? "any client" : "IPv4 or ws:// URL"
                     selectByMouse: true
                     enabled: !Sockets.running
-                    onEditingFinished: Sockets.peerIp = text
+                    onEditingFinished: {
+                        // A ws:// / wss:// URL or IP:port fills both fields.
+                        if (text.includes(":")) {
+                            sockSection.urlError = Sockets.setFromUrl(text)
+                            text = Qt.binding(() => Sockets.peerIp)
+                        } else {
+                            sockSection.urlError = ""
+                            Sockets.peerIp = text
+                        }
+                    }
                 }
                 Label { text: ":" }
                 TextField {
@@ -107,7 +130,10 @@ Item {
                     selectByMouse: true
                     enabled: !Sockets.running
                     validator: IntValidator { bottom: 1; top: 65535 }
-                    onEditingFinished: Sockets.peerPort = Number(text)
+                    onEditingFinished: {
+                        Sockets.peerPort = Number(text)
+                        text = Qt.binding(() => Sockets.peerPort) // follow later URL input
+                    }
                 }
                 Button {
                     text: Sockets.running ? "Stop" : "Start"
@@ -123,9 +149,12 @@ Item {
                 Label {
                     Layout.fillWidth: true
                     elide: Text.ElideRight
-                    color: Sockets.lastError ? Theme.danger : Theme.textDim
-                    text: Sockets.lastError ? Sockets.lastError
-                          : "ss -tnoi dst/src " + Sockets.peerIp + " port " + Sockets.peerPort
+                    color: sockSection.urlError || Sockets.lastError ? Theme.danger : Theme.textDim
+                    text: sockSection.urlError ? sockSection.urlError
+                          : Sockets.lastError ? Sockets.lastError
+                          : (sockSection.local
+                             ? "ss -tnoi " + (Sockets.peerIp ? "dst " + Sockets.peerIp + " " : "") + "sport :" + Sockets.peerPort
+                             : "ss -tnoi dst/src " + Sockets.peerIp + " port " + Sockets.peerPort)
                             + (Sockets.tracked ? " · charting " + Sockets.tracked : "")
                 }
             }
@@ -189,7 +218,9 @@ Item {
                             anchors.centerIn: parent
                             visible: sockList.count === 0
                             color: Theme.textDim
-                            text: Sockets.running ? "No matching TCP sockets" : "Enter the peer and press Start"
+                            text: Sockets.running ? "No matching TCP sockets"
+                                  : sockSection.local ? "Enter the local port and press Start"
+                                  : "Enter the peer (IP or ws:// URL) and press Start"
                         }
                     }
                 }

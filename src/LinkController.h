@@ -94,6 +94,9 @@ public:
 
     // Traffic classes
     Q_INVOKABLE void addClass(const QString &name, const QString &proto, const QString &ip, int port, const QString &mode);
+    // Adds a websocket class from "ws://ip:port/…", "wss://ip" or "ip:port".
+    // Returns an error message, empty on success.
+    Q_INVOKABLE QString addWebSocketClass(const QString &url, const QString &mode);
     Q_INVOKABLE void removeClass(int index);
     Q_INVOKABLE void moveClass(int index, int delta);
     Q_INVOKABLE void setClassField(int index, const QString &key, const QVariant &value);

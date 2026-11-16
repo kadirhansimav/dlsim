@@ -306,18 +306,12 @@ QJsonObject HelperServer::opReadSockets(const QJsonObject &params, QString *erro
 {
     const QString ip = params.value("ip").toString();
     const int port = params.value("port").toInt(-1);
-    if (!isValidIp(ip)) {
-        *error = QStringLiteral("invalid IPv4 address");
+    QList<QStringList> filters;
+    if (!ssSocketFilters(params.value("match").toString(), ip, port, &filters, error))
         return {};
-    }
-    if (port < 1 || port > 65535) {
-        *error = QStringLiteral("port must be 1..65535");
-        return {};
-    }
-    const QString p = ':' + QString::number(port);
     const QStringList base{"-t", "-n", "-o", "-i", "-H", "state", "all"};
     QList<TcpSocketInfo> all;
-    for (const QStringList &filter : {QStringList{"dst", ip, "dport", "=", p}, QStringList{"src", ip, "sport", "=", p}}) {
+    for (const QStringList &filter : filters) {
         const RunResult r = run("ss", base + filter);
         if (!r.ok) {
             *error = QStringLiteral("ss failed: %1").arg(QString::fromUtf8(r.err).trimmed());

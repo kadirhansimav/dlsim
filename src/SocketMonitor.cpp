@@ -38,16 +38,42 @@ void SocketMonitor::setPeerPort(int port)
     Q_EMIT configChanged();
 }
 
+void SocketMonitor::setMatch(const QString &match)
+{
+    if (match == m_match || (match != "peer" && match != "local"))
+        return;
+    m_match = match;
+    Q_EMIT configChanged();
+}
+
+QString SocketMonitor::setFromUrl(const QString &url)
+{
+    QString ip, err;
+    quint16 port = 0;
+    if (!parseWebSocketUrl(url, &ip, &port, &err))
+        return err;
+    setPeerIp(ip);
+    setPeerPort(port);
+    return {};
+}
+
 void SocketMonitor::start()
 {
-    if (!isValidIp(m_ip) || m_port < 1 || m_port > 65535) {
-        m_lastError = QStringLiteral("enter a valid IPv4 address and port");
+    QList<QStringList> filters;
+    if (!ssSocketFilters(m_match, m_ip, m_port, &filters)) {
+        m_lastError = m_match == "local" ? QStringLiteral("enter a local port (and optionally a valid client IPv4 address)")
+                                         : QStringLiteral("enter a valid IPv4 address and port");
         Q_EMIT updated();
         return;
     }
+    m_lastError.clear();
     m_states.clear();
     m_backoff.clear();
-    m_log->log("socket", QStringLiteral("monitoring TCP %1:%2").arg(m_ip).arg(m_port));
+    if (m_match == "local")
+        m_log->log("socket", QStringLiteral("monitoring TCP local port %1%2")
+                                 .arg(m_port).arg(m_ip.isEmpty() ? QString() : QStringLiteral(" from ") + m_ip));
+    else
+        m_log->log("socket", QStringLiteral("monitoring TCP %1:%2").arg(m_ip).arg(m_port));
     m_timer.start();
     Q_EMIT runningChanged();
     poll();
@@ -74,7 +100,7 @@ void SocketMonitor::poll()
     if (!m_helper->isRunning() || m_inFlight)
         return;
     m_inFlight = true;
-    m_helper->request("read_sockets", {{"ip", m_ip}, {"port", m_port}},
+    m_helper->request("read_sockets", {{"ip", m_ip}, {"port", m_port}, {"match", m_match}},
                       [this](bool ok, const QJsonObject &res, const QString &err) {
                           m_inFlight = false;
                           if (!ok) {

@@ -17,6 +17,7 @@ private Q_SLOTS:
     void ssRetransmitting();
     void ssMixed();
     void socketJsonRoundTrip();
+    void socketFilters();
 };
 
 void TestParsers::qdiscStats()
@@ -153,6 +154,31 @@ void TestParsers::socketJsonRoundTrip()
     QCOMPARE(r.backoff, 1);
     QCOMPARE(r.timerMs, 1000.0);
     QCOMPARE(r.key(), socks[0].key());
+}
+
+void TestParsers::socketFilters()
+{
+    QList<QStringList> f;
+    QString err;
+    QVERIFY(ssSocketFilters("peer", "192.0.2.10", 4555, &f, &err));
+    QCOMPARE(f, (QList<QStringList>{{"dst", "192.0.2.10", "dport", "=", ":4555"},
+                                    {"src", "192.0.2.10", "sport", "=", ":4555"}}));
+    QVERIFY(ssSocketFilters("", "192.0.2.10", 4555, &f)); // default is peer
+    QCOMPARE(f.size(), 2);
+    QVERIFY(ssSocketFilters("local", "", 8080, &f));
+    QCOMPARE(f, (QList<QStringList>{{"sport", "=", ":8080"}}));
+    QVERIFY(ssSocketFilters("local", "192.0.2.20", 8080, &f));
+    QCOMPARE(f, (QList<QStringList>{{"dst", "192.0.2.20", "sport", "=", ":8080"}}));
+
+    QVERIFY(!ssSocketFilters("peer", "", 4555, &f, &err));
+    QVERIFY(err.contains("IPv4"));
+    QVERIFY(!ssSocketFilters("local", "1.2.3", 8080, &f, &err));
+    QVERIFY(!ssSocketFilters("local", "", 0, &f, &err));
+    QVERIFY(err.contains("port"));
+    QVERIFY(!ssSocketFilters("peer", "192.0.2.10", 65536, &f, &err));
+    QVERIFY(!ssSocketFilters("both", "192.0.2.10", 80, &f, &err));
+    QVERIFY(err.contains("match"));
+    QVERIFY(!ssSocketFilters("local", "192.0.2.10 or 1", 80, &f, &err)); // never reaches ss argv
 }
 
 QTEST_GUILESS_MAIN(TestParsers)
