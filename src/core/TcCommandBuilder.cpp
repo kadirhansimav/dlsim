@@ -64,7 +64,7 @@ Command filterAdd(const QString &dev, const Filter &f)
 void addFilters(QList<Filter> &out, const TrafficClass &c, int index, int band)
 {
     Filter base;
-    base.proto = c.proto;
+    base.proto = wireProto(c.proto); // websocket is filtered as tcp
     base.band = band;
     const int pref = kFilterPrefBase + 2 * index;
     if (c.ip.isEmpty() && c.port == 0) {

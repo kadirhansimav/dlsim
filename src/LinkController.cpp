@@ -229,6 +229,18 @@ void LinkController::addClass(const QString &name, const QString &proto, const Q
     edited(true);
 }
 
+QString LinkController::addWebSocketClass(const QString &url, const QString &mode)
+{
+    if (m_edit.classes.size() >= kMaxClasses)
+        return QStringLiteral("at most %1 traffic classes").arg(kMaxClasses);
+    QString ip, err;
+    quint16 port = 0;
+    if (!parseWebSocketUrl(url, &ip, &port, &err))
+        return err;
+    addClass(QStringLiteral("WebSocket %1:%2").arg(ip).arg(port), toString(Proto::WebSocket), ip, port, mode);
+    return {};
+}
+
 void LinkController::removeClass(int index)
 {
     if (index < 0 || index >= m_edit.classes.size())
@@ -252,6 +264,9 @@ void LinkController::setClassField(int index, const QString &key, const QVariant
         return;
     QJsonObject o = m_edit.classes[index].toJson();
     o.insert(key, QJsonValue::fromVariant(value));
+    // A websocket class needs a port: start from the plain ws:// port.
+    if (key == "proto" && value.toString() == toString(Proto::WebSocket) && o.value("port").toInt() == 0)
+        o.insert("port", 80);
     const TrafficClass c = TrafficClass::fromJson(o);
     if (c == m_edit.classes[index])
         return;

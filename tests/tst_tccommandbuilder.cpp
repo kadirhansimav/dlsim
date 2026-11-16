@@ -90,6 +90,9 @@ private Q_SLOTS:
     void validation_data();
     void validation();
     void jsonRoundTrip();
+    void webSocketUrl_data();
+    void webSocketUrl();
+    void webSocketDiffIsNoneAgainstTcp();
     void interpolation();
     void shellRendering();
 };
@@ -392,6 +395,12 @@ void TestTcCommandBuilder::filterMatchVariants_data()
     QTest::newRow("tcp ip port") << int(Proto::Tcp) << "192.0.2.10" << 4555
                                  << QStringList{"pref 10 flower ip_proto tcp dst_ip 192.0.2.10 dst_port 4555 classid 1d:2",
                                                 "pref 11 flower ip_proto tcp src_ip 192.0.2.10 src_port 4555 classid 1d:2"};
+    QTest::newRow("websocket ip port") << int(Proto::WebSocket) << "192.0.2.10" << 8080
+                                       << QStringList{"pref 10 flower ip_proto tcp dst_ip 192.0.2.10 dst_port 8080 classid 1d:2",
+                                                      "pref 11 flower ip_proto tcp src_ip 192.0.2.10 src_port 8080 classid 1d:2"};
+    QTest::newRow("websocket port") << int(Proto::WebSocket) << "" << 443
+                                    << QStringList{"pref 10 flower ip_proto tcp dst_port 443 classid 1d:2",
+                                                   "pref 11 flower ip_proto tcp src_port 443 classid 1d:2"};
     QTest::newRow("icmp ip") << int(Proto::Icmp) << "192.0.2.10" << 0
                              << QStringList{"pref 10 flower ip_proto icmp dst_ip 192.0.2.10 classid 1d:2",
                                             "pref 11 flower ip_proto icmp src_ip 192.0.2.10 classid 1d:2"};
@@ -617,6 +626,10 @@ void TestTcCommandBuilder::validation_data()
                             << "invalid IPv4";
     QTest::newRow("port needs tcp/udp")
         << with(base, {{"classes", QJsonArray{QJsonObject{{"name", "a"}, {"port", 22}}}}}) << "needs protocol";
+    QTest::newRow("websocket port ok")
+        << with(base, {{"classes", QJsonArray{QJsonObject{{"name", "a"}, {"proto", "websocket"}, {"port", 8080}}}}}) << "";
+    QTest::newRow("websocket needs port")
+        << with(base, {{"classes", QJsonArray{QJsonObject{{"name", "a"}, {"proto", "websocket"}}}}}) << "needs a port";
     QTest::newRow("custom profile validated")
         << with(base, {{"classes", QJsonArray{QJsonObject{{"name", "a"}, {"mode", "custom"},
                                                           {"uplink", QJsonObject{{"corruptPct", 200}}}}}}})
@@ -650,8 +663,66 @@ void TestTcCommandBuilder::jsonRoundTrip()
     c.downlink.reorderGap = 7;
     c.classes << mavlinkClass(ClassMode::Custom);
     c.classes[0].uplink.corruptPct = 0.5;
+    TrafficClass ws = mavlinkClass();
+    ws.proto = Proto::WebSocket;
+    ws.port = 8080;
+    c.classes << ws;
     c.cut = true;
     QCOMPARE(LinkConfig::fromJson(c.toJson()), c);
+    QCOMPARE(c.toJson().value("classes").toArray().at(1).toObject().value("proto").toString(), QString("websocket"));
+}
+
+void TestTcCommandBuilder::webSocketUrl_data()
+{
+    QTest::addColumn<QString>("url");
+    QTest::addColumn<QString>("ip");   // empty = must fail
+    QTest::addColumn<int>("port");
+    QTest::addColumn<QString>("error"); // substring when failing
+    QTest::newRow("ws port path") << "ws://192.0.2.10:8080/telemetry?x=1" << "192.0.2.10" << 8080 << "";
+    QTest::newRow("ws default") << "ws://192.0.2.10" << "192.0.2.10" << 80 << "";
+    QTest::newRow("wss default") << " WSS://192.0.2.10/ " << "192.0.2.10" << 443 << "";
+    QTest::newRow("wss port") << "wss://10.0.0.1:9443#frag" << "10.0.0.1" << 9443 << "";
+    QTest::newRow("bare ip:port") << "192.0.2.20:5760" << "192.0.2.20" << 5760 << "";
+    QTest::newRow("bare ip no port") << "192.0.2.20" << "" << 0 << "no port";
+    QTest::newRow("hostname") << "ws://vehicle.local:8080" << "" << 0 << "IPv4";
+    QTest::newRow("http") << "http://192.0.2.10:8080" << "" << 0 << "only ws://";
+    QTest::newRow("bad port") << "ws://192.0.2.10:70000" << "" << 0 << "invalid port";
+    QTest::newRow("empty port") << "ws://192.0.2.10:/x" << "" << 0 << "invalid port";
+    QTest::newRow("no host") << "ws://:8080" << "" << 0 << "no host";
+    QTest::newRow("userinfo") << "ws://u:p@192.0.2.10" << "" << 0 << "user info";
+    QTest::newRow("empty") << "" << "" << 0 << "no host";
+}
+
+void TestTcCommandBuilder::webSocketUrl()
+{
+    QFETCH(QString, url);
+    QFETCH(QString, ip);
+    QFETCH(int, port);
+    QFETCH(QString, error);
+    QString gotIp = "unchanged", err;
+    quint16 gotPort = 1;
+    const bool ok = parseWebSocketUrl(url, &gotIp, &gotPort, &err);
+    if (ip.isEmpty()) {
+        QVERIFY(!ok);
+        QVERIFY2(err.contains(error), qPrintable(err));
+        QCOMPARE(gotIp, QString("unchanged"));
+    } else {
+        QVERIFY2(ok, qPrintable(err));
+        QCOMPARE(gotIp, ip);
+        QCOMPARE(int(gotPort), port);
+    }
+}
+
+void TestTcCommandBuilder::webSocketDiffIsNoneAgainstTcp()
+{
+    // Switching a class between tcp and websocket changes nothing in the kernel.
+    LinkConfig a = bridgeConfig();
+    a.classes << mavlinkClass();
+    LinkConfig b = a;
+    b.classes[0].proto = Proto::WebSocket;
+    const Diff d = B::diff(B::buildPlan(a), B::buildPlan(b));
+    QCOMPARE(int(d.level), int(DiffLevel::None));
+    QVERIFY(d.commands.isEmpty());
 }
 
 void TestTcCommandBuilder::interpolation()

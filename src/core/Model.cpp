@@ -41,8 +41,9 @@ constexpr std::array<std::pair<Distribution, const char *>, 4> kDistributions{{
     {Distribution::Pareto, "pareto"}, {Distribution::ParetoNormal, "paretonormal"}}};
 constexpr std::array<std::pair<LossModel, const char *>, 2> kLossModels{{
     {LossModel::Random, "random"}, {LossModel::GilbertElliott, "gemodel"}}};
-constexpr std::array<std::pair<Proto, const char *>, 4> kProtos{{
-    {Proto::Any, "any"}, {Proto::Tcp, "tcp"}, {Proto::Udp, "udp"}, {Proto::Icmp, "icmp"}}};
+constexpr std::array<std::pair<Proto, const char *>, 5> kProtos{{
+    {Proto::Any, "any"}, {Proto::Tcp, "tcp"}, {Proto::Udp, "udp"}, {Proto::Icmp, "icmp"},
+    {Proto::WebSocket, "websocket"}}};
 constexpr std::array<std::pair<ClassMode, const char *>, 3> kClassModes{{
     {ClassMode::Link, "link"}, {ClassMode::Custom, "custom"}, {ClassMode::Excluded, "excluded"}}};
 
@@ -244,8 +245,10 @@ QStringList TrafficClass::validate() const
         e << p + QStringLiteral("name too long");
     if (!ip.isEmpty() && !isValidIp(ip))
         e << p + QStringLiteral("invalid IPv4 address '%1'").arg(ip);
-    if (port != 0 && proto != Proto::Tcp && proto != Proto::Udp)
-        e << p + QStringLiteral("a port needs protocol tcp or udp");
+    if (port != 0 && !hasPorts(proto))
+        e << p + QStringLiteral("a port needs protocol tcp, udp or websocket");
+    if (proto == Proto::WebSocket && port == 0)
+        e << p + QStringLiteral("a websocket class needs a port");
     if (mode == ClassMode::Custom) {
         e << uplink.validate(p + "uplink.");
         e << downlink.validate(p + "downlink.");
@@ -339,6 +342,62 @@ bool isValidIp(const QString &ip)
     static const QRegularExpression re(QStringLiteral(
         "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"));
     return re.match(ip).hasMatch();
+}
+
+bool hasPorts(Proto p)
+{
+    return p == Proto::Tcp || p == Proto::Udp || p == Proto::WebSocket;
+}
+
+Proto wireProto(Proto p)
+{
+    return p == Proto::WebSocket ? Proto::Tcp : p;
+}
+
+bool parseWebSocketUrl(const QString &url, QString *ip, quint16 *port, QString *error)
+{
+    auto fail = [error](const QString &msg) {
+        if (error)
+            *error = msg;
+        return false;
+    };
+    QString rest = url.trimmed();
+    quint16 defPort = 0;
+    if (rest.startsWith(QLatin1String("ws://"), Qt::CaseInsensitive)) {
+        rest = rest.mid(5);
+        defPort = 80;
+    } else if (rest.startsWith(QLatin1String("wss://"), Qt::CaseInsensitive)) {
+        rest = rest.mid(6);
+        defPort = 443;
+    } else if (rest.contains(QLatin1String("://"))) {
+        return fail(QStringLiteral("only ws:// and wss:// URLs are supported"));
+    }
+    // Drop path, query and fragment; reject user info.
+    const qsizetype end = rest.indexOf(QRegularExpression(QStringLiteral("[/?#]")));
+    if (end >= 0)
+        rest.truncate(end);
+    if (rest.contains('@'))
+        return fail(QStringLiteral("user info in the URL is not supported"));
+
+    QString host = rest;
+    int p = defPort;
+    const qsizetype colon = rest.lastIndexOf(':');
+    if (colon >= 0) {
+        host = rest.left(colon);
+        bool ok = false;
+        p = rest.mid(colon + 1).toInt(&ok);
+        if (!ok || p < 1 || p > 65535)
+            return fail(QStringLiteral("invalid port in '%1'").arg(url.trimmed()));
+    }
+    if (host.isEmpty())
+        return fail(QStringLiteral("the URL has no host"));
+    if (!isValidIp(host))
+        return fail(QStringLiteral("host '%1' must be an IPv4 address (filters are IPv4 only)").arg(host));
+    if (p == 0)
+        return fail(QStringLiteral("no port: use ws://, wss:// or IP:port"));
+    *ip = host;
+    *port = quint16(p);
+    return true;
 }
 
 } // namespace dlsim

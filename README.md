@@ -25,6 +25,7 @@ It uses only standard tools: `tc` (netem, prio, flower, matchall/mirred),
 - [Running](#running)
 - [Using it](#using-it)
 - [Reproducing the TCP telemetry stall](#reproducing-the-tcp-telemetry-stall)
+- [WebSocket connections](#websocket-connections)
 - [Presets and scenarios](#presets-and-scenarios)
 - [How it works](#how-it-works)
 - [Limitations (netem and friends)](#limitations-netem-and-friends)
@@ -202,11 +203,13 @@ you impair an interface that carries the default route or an SSH session, and
 before enslaving an interface with addresses to the bridge. **Start** creates
 the bridge (bridge mode) and applies the profiles; **Stop** removes them;
 **Reset all** removes every qdisc, filter, IFB and bridge DLSim created. The
-right side holds the **traffic classes**: protocol + IP + port, each using the
+right side holds the **traffic classes**: protocol (any, TCP, UDP, ICMP or
+WebSocket) + IP + port, each using the
 link profile, a custom profile (own uplink/downlink netem), or excluded. A
 class matches packets *to or from* IP:port, so one class covers both
 directions. First match wins. "Other traffic" uses the link profile or is
-excluded.
+excluded. **+ WebSocket…** adds a WebSocket class from a server URL (see
+[WebSocket connections](#websocket-connections)).
 
 **Link.** Uplink and downlink editors: delay, jitter, correlation and
 distribution (uniform, normal, pareto, paretonormal); loss (random with
@@ -226,9 +229,13 @@ mean interval and mean duration you set.
 
 **Monitor.** 1 Hz statistics from `tc -s -j qdisc show` per direction:
 throughput, packets/s, drops/s, backlog, total drops and overlimits, with live
-charts. Below, the **TCP socket monitor**: enter the peer IP and port and press
-Start. It polls `ss -tnoi` for `dst IP dport = :PORT` and `src IP sport = :PORT`
-at 1 Hz and shows state, Recv-Q/Send-Q, rto, rtt, retransmits, backoff and the
+charts. Below, the **TCP / WebSocket socket monitor**. In *Remote IP:port*
+mode, enter the peer IP and port (or paste a `ws://` / `wss://` URL into the
+peer field) and press Start; it polls `ss -tnoi` for `dst IP dport = :PORT`
+and `src IP sport = :PORT`. In *Local port (server here)* mode it polls
+`sport = :PORT` (plus `dst IP` if a client IP is given), for a server on this
+PC whose clients connect from random ports. Either way it polls at 1 Hz and
+shows state, Recv-Q/Send-Q, rto, rtt, retransmits, backoff and the
 timer (`on` = retransmit, `keepalive`, `persist`) with its countdown. The chart
 plots RTO, backoff and total retransmits of one socket over time. Statistics
 and socket history export to CSV.
@@ -266,6 +273,45 @@ What to look for:
 The log records each backoff change with RTO and retransmit count; export it
 together with the socket CSV for a timeline.
 
+## WebSocket connections
+
+WebSocket is HTTP upgraded to a long-lived TCP connection, so the kernel
+tools see it as plain TCP: DLSim targets it by IP and port. A *WebSocket*
+class is filtered exactly like a TCP class on the same IP:port (`flower
+ip_proto tcp dst_ip … dst_port …` and the `src_` pair); switching a class
+between TCP and WebSocket changes no kernel state. Everything that works on a
+class works on it: link or custom profile, CUT LINK, timed outages, fades,
+scenarios and random dropouts. `wss://` is matched on the port too; TLS does
+not matter to the filter.
+
+1. Setup → **+ WebSocket…** → enter the server URL, e.g.
+   `ws://192.0.2.10:8080/telemetry` (`ws://` defaults to port 80, `wss://` to
+   443; `192.0.2.10:8080` also works). The host must be an IPv4 address:
+   filters are IPv4 only and the helper does not resolve names. Pick the
+   profile: *Custom profile* impairs only the WebSocket (e.g. with "Other
+   traffic: Excluded" in host mode), *Excluded* keeps it clean while the rest
+   of the link fades.
+2. Monitor → socket monitor:
+   - server elsewhere (vehicle, cloud): *Remote IP:port*, paste the same URL;
+   - server on this PC: *Local port (server here)*, enter its port, leave
+     Client empty to see every client (the LISTEN socket shows too) or enter
+     one client's IP.
+3. Play a scenario (Outage ladder, Fade out and back) and watch the socket.
+
+What to look for, in addition to the TCP behaviour above: WebSocket
+libraries usually run their own ping/pong keepalive (often 20–30 s). An
+outage longer than the ping timeout makes the *application* close the socket
+(state goes `FIN-WAIT-1` / `LAST-ACK` and stays there while the link is cut)
+and reconnect after RESTORE, which the log shows as the old socket going and
+a new one appearing. A shorter outage leaves the socket `ESTAB` with backoff
+and RTO growing, and the messages queued in Send-Q are delivered in one burst
+when the retransmit timer fires after RESTORE. With no ping configured, a
+peer that went away during the outage leaves a half-open `ESTAB` socket.
+
+Message contents, opcodes and ping/pong frames are not visible to `tc`: DLSim
+cannot drop or delay individual WebSocket frames, only the TCP segments that
+carry them.
+
 ## Presets and scenarios
 
 Built-in presets: **Wired/clean**, **Good LOS**, **Long range**, **Fringe**,
@@ -296,6 +342,15 @@ Preset format (missing fields take defaults):
 }
 ```
 
+Traffic classes are saved in `dlsim.conf` with the configuration; profiles
+use the preset format above (`proto` is `any`, `tcp`, `udp`, `icmp` or
+`websocket`; `websocket` needs a port):
+
+```json
+{ "name": "Telemetry WS", "enabled": true, "proto": "websocket", "ip": "192.0.2.10", "port": 8080,
+  "mode": "custom", "uplink": { … }, "downlink": { … } }
+```
+
 Scenario format (`type` is `preset`, `fade` or `outage`; `preset` names a
 preset):
 
@@ -322,6 +377,9 @@ addresses, ports. It runs tools from fixed system directories with argument
 lists, never through a shell. It cleans everything up when its stdin closes
 (the GUI exited or crashed) and on SIGINT, SIGTERM or SIGHUP. At start it
 removes leftovers of an earlier crash and reports them in its `ready` event.
+
+`read_sockets` takes `{"ip": …, "port": …, "match": "peer" | "local"}`;
+`match` defaults to `peer`, and `ip` is optional with `local`.
 
 ```
 → {"id":7,"op":"apply_profile","params":{"config":{…}}}

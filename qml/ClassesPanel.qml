@@ -14,7 +14,8 @@ Section {
         wrapMode: Text.WordWrap
         color: Theme.textDim
         text: "A class matches packets to or from IP:port, so one class covers both directions. "
-              + "First match wins. Excluded traffic passes untouched, even during CUT LINK."
+              + "First match wins. Excluded traffic passes untouched, even during CUT LINK. "
+              + "WebSocket classes match the TCP connection on their port (ws:// 80, wss:// 443 by default)."
     }
 
     ListView {
@@ -58,9 +59,9 @@ Section {
                         onEditingFinished: Link.setClassField(row.index, "name", text)
                     }
                     BoundCombo {
-                        Layout.preferredWidth: 70
-                        values: ["any", "tcp", "udp", "icmp"]
-                        labels: ["any", "TCP", "UDP", "ICMP"]
+                        Layout.preferredWidth: 100
+                        values: ["any", "tcp", "udp", "icmp", "websocket"]
+                        labels: ["any", "TCP", "UDP", "ICMP", "WebSocket"]
                         current: row.modelData.proto
                         onPicked: (v) => Link.setClassField(row.index, "proto", v)
                     }
@@ -76,7 +77,7 @@ Section {
                         Layout.preferredWidth: 58
                         text: row.modelData.port > 0 ? row.modelData.port : ""
                         placeholderText: "port"
-                        enabled: row.modelData.proto === "tcp" || row.modelData.proto === "udp"
+                        enabled: ["tcp", "udp", "websocket"].includes(row.modelData.proto)
                         selectByMouse: true
                         validator: IntValidator { bottom: 0; top: 65535 }
                         onEditingFinished: Link.setClassField(row.index, "port", Number(text) || 0)
@@ -118,6 +119,10 @@ Section {
             text: "+ SSH excluded"
             onClicked: Link.addClass("SSH", "tcp", "", 22, "excluded")
         }
+        Button {
+            text: "+ WebSocket…"
+            onClicked: wsDialog.open()
+        }
     }
     RowLayout {
         Label { text: "Other traffic" }
@@ -133,6 +138,67 @@ Section {
             wrapMode: Text.WordWrap
             color: Theme.textDim
             text: Link.otherExcluded ? "Only matched classes are impaired." : "Everything not matched uses the link profile."
+        }
+    }
+
+    Dialog {
+        id: wsDialog
+        title: "Add WebSocket class"
+        modal: true
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(480, parent ? parent.width - 40 : 480)
+        property string error: ""
+        onAboutToShow: error = ""
+        onOpened: wsUrl.forceActiveFocus()
+
+        // Validate before closing so a bad URL keeps the dialog open with the reason.
+        function tryAdd() {
+            error = Link.addWebSocketClass(wsUrl.text, wsMode.current)
+            if (!error)
+                accept()
+        }
+        footer: DialogButtonBox {
+            Button { text: "Add"; DialogButtonBox.buttonRole: DialogButtonBox.ActionRole; onClicked: wsDialog.tryAdd() }
+            Button { text: "Cancel"; DialogButtonBox.buttonRole: DialogButtonBox.RejectRole }
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 6
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Theme.textDim
+                text: "URL of the WebSocket server, e.g. ws://192.0.2.10:8080/telemetry, wss://192.0.2.10 "
+                      + "or 192.0.2.10:8080. The host must be an IPv4 address."
+            }
+            TextField {
+                id: wsUrl
+                Layout.fillWidth: true
+                text: "ws://192.0.2.10:8080"
+                placeholderText: "ws://IP:port/path"
+                selectByMouse: true
+                onAccepted: wsDialog.tryAdd()
+            }
+            RowLayout {
+                Label { text: "Profile" }
+                BoundCombo {
+                    id: wsMode
+                    Layout.preferredWidth: 150
+                    values: ["link", "custom", "excluded"]
+                    labels: ["Link profile", "Custom profile", "Excluded"]
+                    current: "link"
+                    onPicked: (v) => current = v
+                }
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: wsDialog.error !== ""
+                wrapMode: Text.WordWrap
+                color: Theme.danger
+                text: wsDialog.error
+            }
         }
     }
 

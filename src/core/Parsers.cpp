@@ -1,5 +1,7 @@
 #include "Parsers.h"
 
+#include "Model.h"
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QRegularExpression>
@@ -202,6 +204,36 @@ QList<TcpSocketInfo> parseSs(const QString &text)
         out << s;
     }
     return out;
+}
+
+bool ssSocketFilters(const QString &match, const QString &ip, int port, QList<QStringList> *out, QString *error)
+{
+    auto fail = [error](const QString &msg) {
+        if (error)
+            *error = msg;
+        return false;
+    };
+    if (port < 1 || port > 65535)
+        return fail(QStringLiteral("port must be 1..65535"));
+    const QString p = ':' + QString::number(port);
+    out->clear();
+    if (match.isEmpty() || match == "peer") {
+        if (!isValidIp(ip))
+            return fail(QStringLiteral("invalid IPv4 address"));
+        *out << QStringList{"dst", ip, "dport", "=", p} << QStringList{"src", ip, "sport", "=", p};
+        return true;
+    }
+    if (match == "local") {
+        if (ip.isEmpty()) {
+            *out << QStringList{"sport", "=", p};
+            return true;
+        }
+        if (!isValidIp(ip))
+            return fail(QStringLiteral("invalid IPv4 address"));
+        *out << QStringList{"dst", ip, "sport", "=", p};
+        return true;
+    }
+    return fail(QStringLiteral("match must be 'peer' or 'local'"));
 }
 
 } // namespace dlsim
